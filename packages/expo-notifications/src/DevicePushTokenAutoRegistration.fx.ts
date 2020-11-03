@@ -32,7 +32,37 @@ export async function removeAutoServerRegistrationAsync() {
 
 // A global scope (to get all the updates) device push token
 // subscription, never cleared.
-addPushTokenListener(async token => {
+addPushTokenListener(token => {
+  retry(() => updatePushTokenAsync(token), 500, 1000 * 60 * 2);
+});
+
+let nextTryTimeoutId: number | undefined = undefined;
+function retry(fn: () => Promise<unknown>, delay: number, maxDelay: number) {
+  if (nextTryTimeoutId) {
+    clearTimeout(nextTryTimeoutId);
+  }
+  fn().catch(error => {
+    console.warn(
+      '[expo-notifications] Error encountered while updating device push token in server:',
+      error
+    );
+
+    // We only want to retry if it was a network error.
+    // Other error may be JSON.parse error which we can do nothing about.
+    if (
+      error instanceof CodedError &&
+      (error as CodedError).code === 'ERR_NOTIFICATIONS_NETWORK_ERROR'
+    ) {
+      // @ts-ignore: TS can't decide whether to use Node types or RN types
+      nextTryTimeoutId = setTimeout(
+        () => retry(fn, Math.min(delay * 2, maxDelay), maxDelay),
+        delay
+      );
+    }
+  });
+}
+
+async function updatePushTokenAsync(token: DevicePushToken) {
   // Fetch the latest registration info from the persisted storage
   const lastRegistrationInfo = await ServerRegistrationModule.getLastRegistrationInfoAsync?.();
   // If there is none, do not do anything.
@@ -68,7 +98,7 @@ addPushTokenListener(async token => {
       `Error encountered while updating device push token in server: ${error}.`
     );
   });
-});
+}
 
 // Same as in getExpoPushTokenAsync
 function getTypeOfToken(devicePushToken: DevicePushToken) {
