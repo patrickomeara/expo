@@ -4,6 +4,7 @@ import * as Application from 'expo-application';
 import ServerRegistrationModule from './ServerRegistrationModule';
 import { addPushTokenListener } from './TokenEmitter';
 import { DevicePushToken } from './Tokens.types';
+import generateRetries from './utils/generateRetries';
 
 /**
  * Encapsulates device server registration data
@@ -57,34 +58,10 @@ ServerRegistrationModule.getLastRegistrationInfoAsync?.().then(lastRegistrationI
 // A global scope (to get all the updates) device push token
 // subscription, never cleared.
 addPushTokenListener(token => {
-  retry(() => updatePushTokenAsync(token), 500, 1000 * 60 * 2);
+  // Dispatch an abortable task to update
+  // last registration with new token.
+  updatePushTokenAsync(token);
 });
-
-let nextTryTimeoutId: number | undefined = undefined;
-function retry(fn: () => Promise<unknown>, delay: number, maxDelay: number) {
-  if (nextTryTimeoutId) {
-    clearTimeout(nextTryTimeoutId);
-  }
-  fn().catch(error => {
-    console.warn(
-      '[expo-notifications] Error encountered while updating device push token in server:',
-      error
-    );
-
-    // We only want to retry if it was a network error.
-    // Other error may be JSON.parse error which we can do nothing about.
-    if (
-      error instanceof CodedError &&
-      (error as CodedError).code === 'ERR_NOTIFICATIONS_NETWORK_ERROR'
-    ) {
-      // @ts-ignore: TS can't decide whether to use Node types or RN types
-      nextTryTimeoutId = setTimeout(
-        () => retry(fn, Math.min(delay * 2, maxDelay), maxDelay),
-        delay
-      );
-    }
-  });
-}
 
 async function updatePushTokenAsync(token: DevicePushToken) {
   // Fetch the latest registration info from the persisted storage
@@ -118,19 +95,41 @@ async function updatePushTokenAsync(token: DevicePushToken) {
     type: getTypeOfToken(token),
   };
 
-  // Do register
-  await fetch(lastRegistration.url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  }).catch(error => {
-    throw new CodedError(
-      'ERR_NOTIFICATIONS_NETWORK_ERROR',
-      `Error encountered while updating device push token in server: ${error}.`
-    );
+  const retriesIterator = generateRetries(async retry => {
+    try {
+      await fetch(lastRegistration.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }).catch(error => {
+        throw new CodedError(
+          'ERR_NOTIFICATIONS_NETWORK_ERROR',
+          `Error encountered while updating device push token in server: ${error}.`
+        );
+      });
+    } catch (e) {
+      console.warn(
+        '[expo-notifications] Error thrown while updating device push token in server:',
+        e
+      );
+
+      // We only want to retry if it was a network error.
+      // Other error may be JSON.parse error which we can do nothing about.
+      if (e instanceof CodedError && (e as CodedError).code === 'ERR_NOTIFICATIONS_NETWORK_ERROR') {
+        retry();
+      } else {
+        // If we aren't going to try again, throw the error
+        throw e;
+      }
+    }
   });
+
+  let result = await retriesIterator.next();
+  while (!result.done) {
+    result = await retriesIterator.next(result);
+  }
 
   // We uploaded the token successfully, let's clear the `lastPushedToken`
   // from the registration so that we don't try to upload the same token
