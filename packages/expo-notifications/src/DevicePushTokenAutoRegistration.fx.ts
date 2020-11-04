@@ -5,6 +5,7 @@ import ServerRegistrationModule from './ServerRegistrationModule';
 import { addPushTokenListener } from './TokenEmitter';
 import { DevicePushToken } from './Tokens.types';
 import generateRetries from './utils/generateRetries';
+import makeInterruptible from './utils/makeInterruptible';
 
 /**
  * Encapsulates device server registration data
@@ -23,6 +24,10 @@ export type Registration = {
 export async function setAutoServerRegistrationAsync(
   registration: Omit<Registration, 'pendingDevicePushToken'>
 ) {
+  // We are overwriting registration, so we shouldn't let
+  // any pending request complete.
+  abortUpdatingPushToken();
+  // Remember the registration information for future token updates.
   await ServerRegistrationModule.setLastRegistrationInfoAsync?.(JSON.stringify(registration));
 }
 
@@ -31,6 +36,10 @@ export async function setAutoServerRegistrationAsync(
  * updates won't get sent there anymore.
  */
 export async function removeAutoServerRegistrationAsync() {
+  // We are removing registration, so we shouldn't let
+  // any pending request complete.
+  abortUpdatingPushToken();
+  // Do not consider any registration when token updates.
   await ServerRegistrationModule.setLastRegistrationInfoAsync?.(null);
 }
 
@@ -44,7 +53,11 @@ ServerRegistrationModule.getLastRegistrationInfoAsync?.().then(lastRegistrationI
   }
   try {
     const lastRegistration: Registration = JSON.parse(lastRegistrationInfo);
-    if (lastRegistration?.pendingDevicePushToken) {
+    // We only want to retry if `hasPushTokenBeenUpdated` is false.
+    // If it were true it means that another call to `updatePushTokenAsync`
+    // has already occured which could only happen from the listener
+    // which has newer information than persisted storage.
+    if (lastRegistration?.pendingDevicePushToken && !hasPushTokenBeenUpdated()) {
       updatePushTokenAsync(lastRegistration.pendingDevicePushToken);
     }
   } catch (e) {
@@ -55,6 +68,10 @@ ServerRegistrationModule.getLastRegistrationInfoAsync?.().then(lastRegistrationI
   }
 });
 
+const [updatePushTokenAsync, hasPushTokenBeenUpdated, abortUpdatingPushToken] = makeInterruptible<
+  [DevicePushToken]
+>(updatePushTokenAsyncGenerator);
+
 // A global scope (to get all the updates) device push token
 // subscription, never cleared.
 addPushTokenListener(token => {
@@ -63,9 +80,9 @@ addPushTokenListener(token => {
   updatePushTokenAsync(token);
 });
 
-async function updatePushTokenAsync(token: DevicePushToken) {
+async function* updatePushTokenAsyncGenerator(token: DevicePushToken) {
   // Fetch the latest registration info from the persisted storage
-  const lastRegistrationInfo = await ServerRegistrationModule.getLastRegistrationInfoAsync?.();
+  const lastRegistrationInfo = yield ServerRegistrationModule.getLastRegistrationInfoAsync?.();
   // If there is none, do not do anything.
   if (!lastRegistrationInfo) {
     return;
@@ -126,15 +143,18 @@ async function updatePushTokenAsync(token: DevicePushToken) {
     }
   });
 
-  let result = await retriesIterator.next();
+  let result = yield retriesIterator.next();
   while (!result.done) {
-    result = await retriesIterator.next(result);
+    // We specifically want to yield the result here
+    // to the calling function so that call to this generator
+    // may be interrupted between retries.
+    result = yield retriesIterator.next(result);
   }
 
   // We uploaded the token successfully, let's clear the `lastPushedToken`
   // from the registration so that we don't try to upload the same token
   // again.
-  await ServerRegistrationModule.setLastRegistrationInfoAsync?.(
+  yield ServerRegistrationModule.setLastRegistrationInfoAsync?.(
     JSON.stringify({
       ...lastRegistration,
       lastPushedToken: null,

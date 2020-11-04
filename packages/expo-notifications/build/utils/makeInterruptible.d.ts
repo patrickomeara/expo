@@ -1,0 +1,1 @@
+export default function makeInterruptible<Arguments extends any[] = any[], Result = void>(func: (...args: Arguments) => AsyncGenerator<unknown, Result, unknown>): [(...args: Arguments) => Promise<Result | undefined>, () => boolean, () => void];

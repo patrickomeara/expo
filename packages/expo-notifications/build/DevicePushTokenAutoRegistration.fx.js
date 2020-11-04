@@ -3,12 +3,17 @@ import * as Application from 'expo-application';
 import ServerRegistrationModule from './ServerRegistrationModule';
 import { addPushTokenListener } from './TokenEmitter';
 import generateRetries from './utils/generateRetries';
+import makeInterruptible from './utils/makeInterruptible';
 /**
  * Sets the last registration information so that the device push token
  * gets pushed to the given registration endpoint
  * @param registration Registration endpoint to inform of new tokens
  */
 export async function setAutoServerRegistrationAsync(registration) {
+    // We are overwriting registration, so we shouldn't let
+    // any pending request complete.
+    abortUpdatingPushToken();
+    // Remember the registration information for future token updates.
     await ServerRegistrationModule.setLastRegistrationInfoAsync?.(JSON.stringify(registration));
 }
 /**
@@ -16,6 +21,10 @@ export async function setAutoServerRegistrationAsync(registration) {
  * updates won't get sent there anymore.
  */
 export async function removeAutoServerRegistrationAsync() {
+    // We are removing registration, so we shouldn't let
+    // any pending request complete.
+    abortUpdatingPushToken();
+    // Do not consider any registration when token updates.
     await ServerRegistrationModule.setLastRegistrationInfoAsync?.(null);
 }
 // Verify if last persisted registration
@@ -28,7 +37,11 @@ ServerRegistrationModule.getLastRegistrationInfoAsync?.().then(lastRegistrationI
     }
     try {
         const lastRegistration = JSON.parse(lastRegistrationInfo);
-        if (lastRegistration?.pendingDevicePushToken) {
+        // We only want to retry if `hasPushTokenBeenUpdated` is false.
+        // If it were true it means that another call to `updatePushTokenAsync`
+        // has already occured which could only happen from the listener
+        // which has newer information than persisted storage.
+        if (lastRegistration?.pendingDevicePushToken && !hasPushTokenBeenUpdated()) {
             updatePushTokenAsync(lastRegistration.pendingDevicePushToken);
         }
     }
@@ -36,6 +49,7 @@ ServerRegistrationModule.getLastRegistrationInfoAsync?.().then(lastRegistrationI
         console.warn('[expo-notifications] Error encountered while fetching last registration information for auto token updates.', e);
     }
 });
+const [updatePushTokenAsync, hasPushTokenBeenUpdated, abortUpdatingPushToken] = makeInterruptible(updatePushTokenAsyncGenerator);
 // A global scope (to get all the updates) device push token
 // subscription, never cleared.
 addPushTokenListener(token => {
@@ -43,9 +57,9 @@ addPushTokenListener(token => {
     // last registration with new token.
     updatePushTokenAsync(token);
 });
-async function updatePushTokenAsync(token) {
+async function* updatePushTokenAsyncGenerator(token) {
     // Fetch the latest registration info from the persisted storage
-    const lastRegistrationInfo = await ServerRegistrationModule.getLastRegistrationInfoAsync?.();
+    const lastRegistrationInfo = yield ServerRegistrationModule.getLastRegistrationInfoAsync?.();
     // If there is none, do not do anything.
     if (!lastRegistrationInfo) {
         return;
@@ -95,14 +109,17 @@ async function updatePushTokenAsync(token) {
             }
         }
     });
-    let result = await retriesIterator.next();
+    let result = yield retriesIterator.next();
     while (!result.done) {
-        result = await retriesIterator.next(result);
+        // We specifically want to yield the result here
+        // to the calling function so that call to this generator
+        // may be interrupted between retries.
+        result = yield retriesIterator.next(result);
     }
     // We uploaded the token successfully, let's clear the `lastPushedToken`
     // from the registration so that we don't try to upload the same token
     // again.
-    await ServerRegistrationModule.setLastRegistrationInfoAsync?.(JSON.stringify({
+    yield ServerRegistrationModule.setLastRegistrationInfoAsync?.(JSON.stringify({
         ...lastRegistration,
         lastPushedToken: null,
     }));
