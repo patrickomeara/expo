@@ -134,6 +134,11 @@ async function* updatePushTokenAsyncGenerator(token: DevicePushToken) {
           await response.text()
         );
       }
+
+      // Retry if request failed
+      if (!response.ok) {
+        retry();
+      }
     } catch (e) {
       console.warn(
         '[expo-notifications] Error thrown while updating device push token in server:',
