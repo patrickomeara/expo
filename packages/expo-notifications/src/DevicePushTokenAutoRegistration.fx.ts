@@ -114,7 +114,7 @@ async function* updatePushTokenAsyncGenerator(token: DevicePushToken) {
 
   const retriesIterator = generateRetries(async retry => {
     try {
-      await fetch(lastRegistration.url, {
+      const response = await fetch(lastRegistration.url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -126,6 +126,14 @@ async function* updatePushTokenAsyncGenerator(token: DevicePushToken) {
           `Error encountered while updating device push token in server: ${error}.`
         );
       });
+
+      // Help debug erroring servers
+      if (!response.ok) {
+        console.debug(
+          '[expo-notifications] Error encountered while updating device push token in server:',
+          await response.text()
+        );
+      }
     } catch (e) {
       console.warn(
         '[expo-notifications] Error thrown while updating device push token in server:',
