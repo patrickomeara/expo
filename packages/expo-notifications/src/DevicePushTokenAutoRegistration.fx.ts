@@ -11,6 +11,7 @@ import { DevicePushToken } from './Tokens.types';
 export type Registration = {
   url: string;
   body: Record<string, any>;
+  pendingDevicePushToken?: DevicePushToken | null;
 };
 
 /**
@@ -18,7 +19,9 @@ export type Registration = {
  * gets pushed to the given registration endpoint
  * @param registration Registration endpoint to inform of new tokens
  */
-export async function setAutoServerRegistrationAsync(registration: Registration) {
+export async function setAutoServerRegistrationAsync(
+  registration: Omit<Registration, 'pendingDevicePushToken'>
+) {
   await ServerRegistrationModule.setLastRegistrationInfoAsync?.(JSON.stringify(registration));
 }
 
@@ -29,6 +32,27 @@ export async function setAutoServerRegistrationAsync(registration: Registration)
 export async function removeAutoServerRegistrationAsync() {
   await ServerRegistrationModule.setLastRegistrationInfoAsync?.(null);
 }
+
+// Verify if last persisted registration
+// has successfully uploaded last known
+// device push token. If not, retry.
+ServerRegistrationModule.getLastRegistrationInfoAsync?.().then(lastRegistrationInfo => {
+  if (!lastRegistrationInfo) {
+    // No last registration info, nothing to do
+    return;
+  }
+  try {
+    const lastRegistration: Registration = JSON.parse(lastRegistrationInfo);
+    if (lastRegistration?.pendingDevicePushToken) {
+      updatePushTokenAsync(lastRegistration.pendingDevicePushToken);
+    }
+  } catch (e) {
+    console.warn(
+      '[expo-notifications] Error encountered while fetching last registration information for auto token updates.',
+      e
+    );
+  }
+});
 
 // A global scope (to get all the updates) device push token
 // subscription, never cleared.
@@ -72,6 +96,15 @@ async function updatePushTokenAsync(token: DevicePushToken) {
 
   // Prepare request body
   const lastRegistration: Registration = JSON.parse(lastRegistrationInfo);
+  // Persist `pendingDevicePushToken` in case the app gets killed
+  // before we finish registering to server.
+  await ServerRegistrationModule.setLastRegistrationInfoAsync?.(
+    JSON.stringify({
+      ...lastRegistration,
+      pendingDevicePushToken: token,
+    })
+  );
+
   const body = {
     ...lastRegistration.body,
     // Information whether a token is applicable
@@ -98,6 +131,16 @@ async function updatePushTokenAsync(token: DevicePushToken) {
       `Error encountered while updating device push token in server: ${error}.`
     );
   });
+
+  // We uploaded the token successfully, let's clear the `lastPushedToken`
+  // from the registration so that we don't try to upload the same token
+  // again.
+  await ServerRegistrationModule.setLastRegistrationInfoAsync?.(
+    JSON.stringify({
+      ...lastRegistration,
+      lastPushedToken: null,
+    })
+  );
 }
 
 // Same as in getExpoPushTokenAsync
