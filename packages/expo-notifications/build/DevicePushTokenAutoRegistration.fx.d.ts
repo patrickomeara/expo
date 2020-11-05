@@ -18,3 +18,4 @@ export declare function setAutoServerRegistrationAsync(registration: Omit<Regist
  * updates won't get sent there anymore.
  */
 export declare function removeAutoServerRegistrationAsync(): Promise<void>;
+export declare function __handlePersistedRegistrationInfoAsync(lastRegistrationInfo: string | null | undefined): Promise<void>;

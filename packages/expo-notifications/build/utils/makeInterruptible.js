@@ -1,4 +1,5 @@
-// Create an interruptable function out of provided function generator
+// Create an interruptable function out of provided async function generator.
+// It awaits on the generator and on the yielded values.
 // See: https://dev.to/chromiumdev/cancellable-async-functions-in-javascript-5gp7
 export default function makeInterruptible(func) {
     // eslint-disable-next-line @typescript-eslint/ban-types
@@ -10,17 +11,22 @@ export default function makeInterruptible(func) {
         const iter = func(...args);
         let resumeValue;
         for (;;) {
+            // Guard before await
+            if (localNonce !== globalNonce) {
+                return; // a new call was made
+            }
             // We can use a mix of function generator and asynchronous function
             // as per https://www.pluralsight.com/guides/using-asyncawait-with-generator-functions
             const n = await iter.next(resumeValue);
             if (n.done) {
                 return n.value; // final return value of passed generator
             }
-            // whatever the generator yielded, _now_ run await on it
-            resumeValue = await n.value;
+            // Guard before await
             if (localNonce !== globalNonce) {
                 return; // a new call was made
             }
+            // whatever the generator yielded, _now_ run await on it
+            resumeValue = await n.value;
             // next loop, we give resumeValue back to the generator
         }
     }

@@ -1,4 +1,5 @@
-export default function generateRetries(func: (retry: () => void) => Promise<void>, options?: {
+export default function generateRetries<T>(func: (retry: () => void) => Promise<T>, options?: {
     initialDelay?: number;
     maximumDelay?: number;
-}): AsyncGenerator<void, any, unknown>;
+    exponentialFactor?: number;
+}): AsyncGenerator<T | undefined, T | undefined, T | undefined>;
