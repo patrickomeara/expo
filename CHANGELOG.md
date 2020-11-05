@@ -11,6 +11,7 @@ Package-specific changes not released in any SDK will be added here just before 
 
 - Removed “info”, “save” and “pin” functionalities from persistent notification shown in notification tray while developing an experience via Expo client on Android. ([#10333](https://github.com/expo/expo/pull/10333), [#10334](https://github.com/expo/expo/pull/10334) by [@sjchmiela](https://github.com/sjchmiela))
 - Removed support for `androidShowExponentNotificationInShellApp` property in app manifest (it was responsible for enabling persistent development notification in standalone apps). ([#10335](https://github.com/expo/expo/pull/10335) by [@sjchmiela](https://github.com/sjchmiela))
+- `AppLoading` is extracted to the separate `expo-app-loading` module. ([#10929](https://github.com/expo/expo/pull/10929) by [@bbartec](https://github.com/bbartec))
 
 ### 🎉 New features
 
