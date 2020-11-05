@@ -43,10 +43,24 @@ export async function removeAutoServerRegistrationAsync() {
   await ServerRegistrationModule.setLastRegistrationInfoAsync?.(null);
 }
 
+// A global scope (to get all the updates) device push token
+// subscription, never cleared.
+addPushTokenListener(token => {
+  // Dispatch an abortable task to update
+  // last registration with new token.
+  updatePushTokenAsync(token);
+});
+
+ServerRegistrationModule.getLastRegistrationInfoAsync?.().then(
+  __handlePersistedRegistrationInfoAsync
+);
+
 // Verify if last persisted registration
 // has successfully uploaded last known
 // device push token. If not, retry.
-ServerRegistrationModule.getLastRegistrationInfoAsync?.().then(lastRegistrationInfo => {
+export async function __handlePersistedRegistrationInfoAsync(
+  lastRegistrationInfo: string | null | undefined
+) {
   if (!lastRegistrationInfo) {
     // No last registration info, nothing to do
     return;
@@ -66,12 +80,4 @@ ServerRegistrationModule.getLastRegistrationInfoAsync?.().then(lastRegistrationI
       e
     );
   }
-});
-
-// A global scope (to get all the updates) device push token
-// subscription, never cleared.
-addPushTokenListener(token => {
-  // Dispatch an abortable task to update
-  // last registration with new token.
-  updatePushTokenAsync(token);
-});
+}
